@@ -1,0 +1,369 @@
+from tkinter import filedialog, Tk
+
+Tk().withdraw()
+diretorio = filedialog.askopenfilename(
+    title="Selecione um código-fonte", filetypes=[("Arquivos C", "*.c *.txt")]
+)
+
+with open(diretorio, "r", encoding="utf-8") as f:
+    linhas = f.readlines()
+
+codigo = ''.join(linhas)
+
+palavras_chave = {
+    "int", "float", "char", "void",
+    "if", "else", "while", "do", "for",
+    "return", "scanf", "printf",
+    "switch", "case", "break", "default", "main"
+}
+
+simbolos = {
+    "(": "ABRE_PAR", ")": "FECHA_PAR",
+    "{": "ABRE_CHAVE", "}": "FECHA_CHAVE",
+    ";": "PONTO_VIRG", ",": "VIRGULA",
+    "[": "ABRE_COLCHETE", "]": "FECHA_COLCHETE",
+    "&": "E_COMERCIAL", ":": "DOIS_PONTOS"
+}
+
+operadores_booleanos = {
+    "==": "IGUAL_IGUAL", "!=": "DIFERENTE",
+    ">=": "MAIOR_IGUAL", "<=": "MENOR_IGUAL",
+    "&&": "E_LOGICO", "||": "OU_LOGICO",
+    "++": "INC", "--": "DEC"
+}
+
+operadores = {
+    "+": "SOMA", "-": "SUB", "*": "MULT", "/": "DIV", "=": "ATRIBUICAO",
+    ">": "MAIOR", "<": "MENOR", "%": "MOD"
+}
+
+def analisador_lexico(codigo):
+    linha_num = 1
+    i = 0
+    while i < len(codigo):
+        c = codigo[i]
+        if c == '\n':
+            linha_num += 1
+            i += 1
+            continue
+        if c.isspace():
+            i += 1
+            continue
+
+        if codigo[i:i+2] == "//":
+            while i < len(codigo) and codigo[i] != '\n':
+                i += 1
+            continue
+
+        if i + 1 < len(codigo) and codigo[i:i+2] in operadores_booleanos:
+            lex = codigo[i:i+2]
+            yield (linha_num, lex, operadores_booleanos[lex])
+            i += 2
+            continue
+
+        if c == '"':
+            i += 1
+            start = i
+            while i < len(codigo) and codigo[i] != '"':
+                i += 1
+            if i >= len(codigo):
+                yield (linha_num, codigo[start:], "ERRO_STRING_NAO_FECHADA")
+                break
+            yield (linha_num, codigo[start:i], "STRING")
+            i += 1
+            continue
+
+        if c in simbolos:
+            yield (linha_num, c, simbolos[c])
+            i += 1
+            continue
+
+        if c in operadores:
+            yield (linha_num, c, operadores[c])
+            i += 1
+            continue
+
+        if c.isalpha() or c == '_':
+            start = i
+            while i < len(codigo) and (codigo[i].isalnum() or codigo[i] == '_'):
+                i += 1
+            palavra = codigo[start:i]
+            tipo = "PALAVRA_CHAVE" if palavra in palavras_chave else "IDENTIFICADOR"
+            yield (linha_num, palavra, tipo)
+            continue
+
+        if c.isdigit():
+            start = i
+            has_dot = False
+            while i < len(codigo) and (codigo[i].isdigit() or codigo[i] == '.'):
+                if codigo[i] == '.':
+                    if has_dot:
+                        break
+                    has_dot = True
+                i += 1
+            numero = codigo[start:i]
+            tipo = "NUMERO_FLOAT" if has_dot else "NUMERO"
+            yield (linha_num, numero, tipo)
+            continue
+
+        yield (linha_num, c, "DESCONHECIDO")
+        i += 1
+
+tokens = list(analisador_lexico(codigo))
+tokens_simplificados = [(tipo, lexema) for _, lexema, tipo in tokens]
+
+pos = 0
+
+def token_atual():
+    return tokens_simplificados[pos] if pos < len(tokens_simplificados) else ("EOF", "EOF")
+
+def erro(mensagem):
+    linha = tokens[pos][0] if pos < len(tokens) else "EOF"
+    print(f"Erro sintático na linha {linha}: {mensagem}")
+    return False
+
+def consumir(tipo_esperado):
+    global pos
+    tipo, lexema = token_atual()
+    if tipo == tipo_esperado:
+        pos += 1
+        return True
+    return erro(f"Esperado {tipo_esperado}, mas encontrou {tipo} ({lexema})")
+
+def programa():
+    if token_atual() != ("PALAVRA_CHAVE", "int"):
+        return erro("esperado 'int' no início")
+    consumir("PALAVRA_CHAVE")  
+
+    if token_atual() != ("PALAVRA_CHAVE", "main"):
+        return erro("esperado 'main'")
+    consumir("PALAVRA_CHAVE")  
+
+    if not consumir("ABRE_PAR"): return False
+    if not consumir("FECHA_PAR"): return False
+
+    return bloco()
+
+def bloco():
+    if not consumir("ABRE_CHAVE"): return False
+    while token_atual()[0] != "FECHA_CHAVE" and token_atual()[0] != "EOF":
+        if not declaracao(): return False
+    return consumir("FECHA_CHAVE")
+
+def declaracao():
+    if token_atual()[0] == "PALAVRA_CHAVE" and token_atual()[1] in ["int", "float", "char", "void"]:
+        consumir("PALAVRA_CHAVE")  
+        if not consumir("IDENTIFICADOR"): return False
+        # Suporta declaração de arrays: IDENTIFICADOR [ NUMERO ] [ NUMERO ] ...
+        while token_atual()[0] == "ABRE_COLCHETE":
+            consumir("ABRE_COLCHETE")
+            if not consumir("NUMERO"): return False
+            if not consumir("FECHA_COLCHETE"): return False
+        if token_atual()[0] == "ATRIBUICAO":
+            consumir("ATRIBUICAO")
+            if not expressao(): return False
+        while token_atual()[0] == "VIRGULA":
+            consumir("VIRGULA")
+            if not consumir("IDENTIFICADOR"): return False
+            while token_atual()[0] == "ABRE_COLCHETE":
+                consumir("ABRE_COLCHETE")
+                if not consumir("NUMERO"): return False
+                if not consumir("FECHA_COLCHETE"): return False
+            if token_atual()[0] == "ATRIBUICAO":
+                consumir("ATRIBUICAO")
+                if not expressao(): return False
+        return consumir("PONTO_VIRG")
+    else:
+        return comando()
+
+def comando_if():
+    consumir("PALAVRA_CHAVE")  
+    if not consumir("ABRE_PAR"): return False
+    if not expressao(): return False
+    if not consumir("FECHA_PAR"): return False
+    if not comando(): return False
+    if token_atual()[1] == "else":
+        consumir("PALAVRA_CHAVE")  
+        if not comando(): return False
+    return True
+
+def comando():
+    tipo, lexema = token_atual()
+
+    if tipo == "ABRE_CHAVE":
+        return bloco()
+
+    if tipo == "IDENTIFICADOR":
+        consumir("IDENTIFICADOR")
+        if token_atual()[0] == "ABRE_PAR":
+            consumir("ABRE_PAR")
+            while token_atual()[0] not in ("FECHA_PAR", "EOF"):
+                tipo_arg, lexema_arg = token_atual()
+                if tipo_arg == "STRING":
+                    consumir("STRING")
+                elif tipo_arg == "E_COMERCIAL":
+                    consumir("E_COMERCIAL")
+                    if not consumir("IDENTIFICADOR"): return False
+                    while token_atual()[0] == "ABRE_COLCHETE":
+                        consumir("ABRE_COLCHETE")
+                        if not expressao(): return False
+                        if not consumir("FECHA_COLCHETE"): return False
+                elif tipo_arg == "IDENTIFICADOR":
+                    consumir("IDENTIFICADOR")
+                    while token_atual()[0] == "ABRE_COLCHETE":
+                        consumir("ABRE_COLCHETE")
+                        if not expressao(): return False
+                        if not consumir("FECHA_COLCHETE"): return False
+                elif tipo_arg in ["NUMERO", "NUMERO_FLOAT"]:
+                    consumir(tipo_arg)
+                elif tipo_arg == "VIRGULA":
+                    consumir("VIRGULA")
+                else:
+                    return erro(f"argumento inválido '{lexema_arg}' em chamada de função.")
+            if not consumir("FECHA_PAR"): return False
+            return consumir("PONTO_VIRG")
+        elif token_atual()[0] == "ATRIBUICAO":
+            consumir("ATRIBUICAO")
+            if not expressao(): return False
+            return consumir("PONTO_VIRG")
+        else:
+            return erro("comando com identificador mal formado.")
+
+    elif lexema == "if":
+        return comando_if()
+
+    elif lexema == "while":
+        consumir("PALAVRA_CHAVE")  
+        if not consumir("ABRE_PAR"): return False
+        if not expressao(): return False
+        if not consumir("FECHA_PAR"): return False
+        return comando()
+
+    elif lexema == "do":
+        consumir("PALAVRA_CHAVE")  
+        if not comando(): return False
+        if token_atual() != ("PALAVRA_CHAVE", "while"):
+            return erro("esperado 'while' após 'do'")
+        consumir("PALAVRA_CHAVE")  
+        if not consumir("ABRE_PAR"): return False
+        if not expressao(): return False
+        if not consumir("FECHA_PAR"): return False
+        return consumir("PONTO_VIRG")
+
+    elif lexema == "for":
+        consumir("PALAVRA_CHAVE")  
+        if not consumir("ABRE_PAR"): return False
+        if token_atual()[0] == "IDENTIFICADOR":
+            consumir("IDENTIFICADOR")
+            if token_atual()[0] == "ATRIBUICAO":
+                consumir("ATRIBUICAO")
+                if not expressao(): return False
+        if not consumir("PONTO_VIRG"): return False
+        if not expressao(): return False
+        if not consumir("PONTO_VIRG"): return False
+        if token_atual()[0] == "IDENTIFICADOR":
+            consumir("IDENTIFICADOR")
+            if token_atual()[0] in ("INC", "DEC"):
+                consumir(token_atual()[0])
+            elif token_atual()[0] == "ATRIBUICAO":
+                consumir("ATRIBUICAO")
+                if not expressao(): return False
+        if not consumir("FECHA_PAR"): return False
+        return comando()
+
+    elif lexema == "return":
+        consumir("PALAVRA_CHAVE")  
+        expressao()
+        return consumir("PONTO_VIRG")
+
+    elif lexema in ["scanf", "printf"]:
+        consumir("PALAVRA_CHAVE")
+        if not consumir("ABRE_PAR"): return False
+        while token_atual()[0] not in ("FECHA_PAR", "EOF"):
+            tipo_arg, lexema_arg = token_atual()
+            if tipo_arg == "STRING":
+                consumir("STRING")
+            elif tipo_arg == "E_COMERCIAL":
+                consumir("E_COMERCIAL")
+                if not consumir("IDENTIFICADOR"): return False
+                while token_atual()[0] == "ABRE_COLCHETE":
+                    consumir("ABRE_COLCHETE")
+                    if not expressao(): return False
+                    if not consumir("FECHA_COLCHETE"): return False
+                    if token_atual()[0] == "ABRE_COLCHETE":
+                        consumir("ABRE_COLCHETE")
+                        if not expressao(): return False
+                        if not consumir("FECHA_COLCHETE"): return False
+            elif tipo_arg == "IDENTIFICADOR":
+                consumir("IDENTIFICADOR")
+                while token_atual()[0] == "ABRE_COLCHETE":
+                    consumir("ABRE_COLCHETE")
+                    if not expressao(): return False
+                    if not consumir("FECHA_COLCHETE"): return False
+            elif tipo_arg in ["NUMERO", "NUMERO_FLOAT"]:
+                consumir(tipo_arg)
+            elif tipo_arg == "VIRGULA":
+                consumir("VIRGULA")
+            else:
+                return erro(f"argumento inválido '{lexema_arg}' em chamada de função.")
+        if not consumir("FECHA_PAR"): return erro("parêntese de fechamento não encontrado.")
+        return consumir("PONTO_VIRG")
+
+    elif lexema == "switch":
+        consumir("PALAVRA_CHAVE")  
+        if not consumir("ABRE_PAR"): return False
+        if not consumir("IDENTIFICADOR"): return False
+        if not consumir("FECHA_PAR"): return False
+        if not consumir("ABRE_CHAVE"): return False
+        while token_atual()[1] in ["case", "default"]:
+            if token_atual()[1] == "case":
+                consumir("PALAVRA_CHAVE")  
+                if token_atual()[0] in ["NUMERO", "NUMERO_FLOAT"]:
+                    consumir(token_atual()[0])
+                if not consumir("DOIS_PONTOS"): return False
+            elif token_atual()[1] == "default":
+                consumir("PALAVRA_CHAVE")  
+                if not consumir("DOIS_PONTOS"): return False
+            while token_atual()[1] not in ["case", "default", "}"]:
+                if token_atual()[1] == "break":
+                    consumir("PALAVRA_CHAVE")  
+                    if not consumir("PONTO_VIRG"): return False
+                else:
+                    if not comando(): return False
+        return consumir("FECHA_CHAVE")
+
+    return False
+
+def expressao():
+    if token_atual()[0] == "ABRE_PAR":
+        consumir("ABRE_PAR")
+        if not expressao(): return False
+        if not consumir("FECHA_PAR"): return False
+
+    elif token_atual()[0] in ["IDENTIFICADOR", "NUMERO", "NUMERO_FLOAT"]:
+        if token_atual()[0] == "IDENTIFICADOR":
+            consumir("IDENTIFICADOR")
+            while token_atual()[0] == "ABRE_COLCHETE":
+                consumir("ABRE_COLCHETE")
+                if not expressao(): return False
+                if not consumir("FECHA_COLCHETE"): return False
+        else:
+            consumir(token_atual()[0])
+
+    else:
+        return erro("expressão mal formada.")
+
+    while token_atual()[0] in list(operadores.values()) + list(operadores_booleanos.values()):
+        token_op = token_atual()[0]
+        consumir(token_op)
+        if token_op in ("INC", "DEC"): 
+            return True
+        if not expressao(): return False
+
+    return True
+
+print("\n==== RESULTADO DA ANÁLISE SINTÁTICA ====")
+if programa():
+    print("\n✅ Análise sintática concluída com sucesso!")
+else:
+    print("\n❌ Erro na análise sintática.")
