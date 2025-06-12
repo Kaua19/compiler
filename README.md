@@ -35,4 +35,4 @@ Este projeto implementa um analisador léxico e sintático simples para um subco
 
 1. Clone o repositório:
    ```bash
-   git clone https://github.com/seuusuario/seurepositorio.git
+    https://github.com/Kaua19/compiler.git    
